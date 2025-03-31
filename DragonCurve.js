@@ -2,13 +2,13 @@ let segments = [];
 let length = 100;
 let endSegment;
 let firstTime = true;
-let viewScale = 0.1;
 let transitionAmount = 0;
 let frameCounter = 0;
 let iterationCount = 0;
 let iterationComplete = true;
 let growthFactor = 1.4142; // Square root of 2
 let totalObjects = 0;
+let viewScale = 5;
 
 // Debug mode and pause variables
 let debugMode = false;
@@ -16,16 +16,21 @@ let paused = false;
 let fpsHistory = [];
 let maxFpsHistory = 120; // Keep 2 minutes of data at 60fps
 
+// Delay variables
+let delayBetweenIterations = 60; // Frames to wait (60 frames = ~2 seconds at 30fps)
+let delayCounter = 0;
+let inDelayPhase = false;
+
 function setup() {
   createCanvas(1500, 700);
   // Create initial vertical segment
   let a = createVector(0, 0);
   let b = createVector(0, length);
+
   endSegment = new Segment(a, b, b);
   endSegment.completed = true;
   segments.push(endSegment);
-  
-  calculateInitialBounds();
+  frameRate(30);
 }
 
 function draw() {
@@ -44,35 +49,47 @@ function draw() {
     if (transitionAmount < 1) {
       transitionAmount += 0.01;
     }
-    
-    // Start next iteration when current one is complete
+
+    // Handle the delay between iterations
     if (iterationComplete && transitionAmount >= 1) {
-      // Before starting next set, update the actual view scale
-      viewScale = viewScale / growthFactor;
-      
-      nextSet();
-      iterationCount++;
-      transitionAmount = 0;
+      if (!inDelayPhase) {
+        // Start delay phase
+        inDelayPhase = true;
+        delayCounter = 0;
+      } else {
+        // Count the delay
+        delayCounter++;
+        
+        // If delay is complete, start next iteration
+        if (delayCounter >= delayBetweenIterations) {
+          // Before starting next set, update the actual view scale
+          viewScale = viewScale / growthFactor;
+          
+          nextSet();
+          iterationCount++;
+          transitionAmount = 0;
+          inDelayPhase = false;
+        }
+      }
     }
   }
   
   push();
   // Center the view
-  translate(width / 2, height / 2);
+  // Calculate the center of mass of all segments
+  let centerOfMass = calculateCenterOfMass();
+
+  // Center the view based on the center of mass
+  translate(width / 2 - centerOfMass.x * viewScale, height / 2 - centerOfMass.y * viewScale);
   
-  // Get current scale based on transition
-  let currentScale = getCurrentScale();
-  
-  // Update and draw segments
   iterationComplete = true;
   for (let s of segments) {
     if (!paused && !s.completed) {
       s.update();
       iterationComplete = false;
     }
-    s.show(currentScale);
+    s.show(viewScale);
   }
-  
   pop();
   
   // Display stats
@@ -82,22 +99,22 @@ function draw() {
   text("Iteration: " + iterationCount, 10, 100);
   text("FPS: " + frameRate().toFixed(1), 10, 150);
   
-  // Display pause status
-  if (paused) {
-    text("PAUSED", 10, 200);
+  // Display delay info when in delay phase
+  if (inDelayPhase) {
+    text("Delay: " + (delayBetweenIterations - delayCounter), 10, 250);
   }
   
   totalObjects = segments.length;
   
+  // Display pause status
+  if (paused) {
+    text("PAUSED", 10, 200);
+  }
+
   // Draw FPS chart in debug mode
   if (debugMode) {
     drawDebugInfo();
   }
-}
-
-function getCurrentScale() {
-  let progressRatio = transitionAmount;
-  return viewScale * (1 - progressRatio * (1 - 1/growthFactor));
 }
 
 function drawDebugInfo() {
@@ -136,9 +153,13 @@ function drawDebugInfo() {
   let infoY = chartY + chartHeight + 20;
   text("Segments: " + segments.length, infoX, infoY);
   text("View Scale: " + viewScale.toFixed(6), infoX, infoY + 20);
-  text("Current Scale: " + getCurrentScale().toFixed(6), infoX, infoY + 40);
   text("Transition: " + transitionAmount.toFixed(2), infoX, infoY + 60);
   text("Iteration: " + iterationCount, infoX, infoY + 80);
+  
+  // Add delay information to debug display
+  if (inDelayPhase) {
+    text("Delay Count: " + delayCounter + "/" + delayBetweenIterations, infoX, infoY + 100);
+  }
   
   // Draw keyboard controls help
   let helpX = 10;
@@ -147,33 +168,21 @@ function drawDebugInfo() {
   text("Controls:", helpX, helpY);
   text("D - Toggle Debug Mode", helpX, helpY + 20);
   text("P - Pause/Resume", helpX, helpY + 40);
+  text("+ / - - Adjust Delay (Current: " + delayBetweenIterations + " frames)", helpX, helpY + 60);
 }
 
-// Check if an object is visible on screen
-function isOnScreen(pos, size) {
-  return (
-    pos.x + size > -width/2 && 
-    pos.x - size < width/2 && 
-    pos.y + size > -height/2 && 
-    pos.y - size < height/2
-  );
-}
-
-function calculateInitialBounds() {
-  // Set initial bounds to encompass the first segment with padding
-  let fractalBounds = {};
-  fractalBounds.minX = -length;
-  fractalBounds.maxX = length;
-  fractalBounds.minY = -length;
-  fractalBounds.maxY = length;
+function calculateCenterOfMass() {
+  let totalX = 0;
+  let totalY = 0;
+  let count = 0;
   
-  let fractalWidth = fractalBounds.maxX - fractalBounds.minX;
-  let fractalHeight = fractalBounds.maxY - fractalBounds.minY;
+  for (let s of segments) {
+    totalX += s.a.x + s.b.x;
+    totalY += s.a.y + s.b.y;
+    count += 2; // Each segment has two points
+  }
   
-  let widthScale = (width * 0.8) / fractalWidth;
-  let heightScale = (height * 0.8) / fractalHeight;
-  
-  viewScale = min(widthScale, heightScale);
+  return createVector(totalX / count, totalY / count);
 }
 
 function nextSet() {
@@ -200,6 +209,12 @@ function keyPressed() {
     debugMode = !debugMode;
   } else if (key === 'p' || key === 'P') {
     paused = !paused;
+  } else if (key === '+' || key === '=') {
+    // Increase delay
+    delayBetweenIterations += 15;
+  } else if (key === '-' || key === '_') {
+    // Decrease delay, but don't go below 0
+    delayBetweenIterations = max(0, delayBetweenIterations - 15);
   }
 }
 
@@ -215,14 +230,14 @@ class Segment {
     this.weight = 12;
   }
 
-  show(scale) {
-    let adaptiveWeight = constrain(this.weight * sqrt(scale), 1, 16);
+  show(viewScale) {
+    let adaptiveWeight = 1;
     
     strokeWeight(adaptiveWeight);
     stroke(0, 238, 0);
     
-    let screenA = p5.Vector.mult(this.a, scale);
-    let screenB = p5.Vector.mult(this.b, scale);
+    let screenA = p5.Vector.mult(this.a, viewScale);
+    let screenB = p5.Vector.mult(this.b, viewScale);
     fill(255,0,0)
     line(screenA.x, screenA.y, screenB.x, screenB.y);
   }
@@ -246,4 +261,9 @@ class Segment {
     this.a = p5.Vector.add(Va, this.origin);
     this.b = p5.Vector.add(Vb, this.origin);
   }
+}
+
+function mouseWheel(event) {
+  viewScale *= event.delta > 0 ? 1.1 : 0.9; // Adjust zoom scale based on scroll direction
+  return false;
 }
